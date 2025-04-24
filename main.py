@@ -3,6 +3,7 @@ import cv2 as cv
 import numpy as np
 import keras
 from PIL import Image
+import tensorflow as tf
 
 # Define label names at the top
 label_name = ['Apple scab','Apple Black rot', 'Apple Cedar apple rust', 'Apple healthy', 'Cherry Powdery mildew',
@@ -77,6 +78,41 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Helper function to detect if image is a plant/leaf
+def is_plant_image(img, threshold=0.3):
+    """
+    Analyze image to determine if it likely contains a plant or leaf.
+    Uses color and texture features to make this determination.
+    
+    Args:
+        img: The OpenCV image
+        threshold: Green ratio threshold (0-1)
+        
+    Returns:
+        boolean: True if the image likely contains a plant, False otherwise
+    """
+    # 1. Check color distribution (plants are typically green)
+    hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
+    
+    # Define range for green color in HSV
+    lower_green = np.array([25, 40, 40])
+    upper_green = np.array([95, 255, 255])
+    
+    # Create mask for green areas
+    green_mask = cv.inRange(hsv, lower_green, upper_green)
+    green_ratio = np.sum(green_mask > 0) / (img.shape[0] * img.shape[1])
+    
+    # 2. Check texture features (edges characteristic of leaves)
+    gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+    blurred = cv.GaussianBlur(gray, (5, 5), 0)
+    edges = cv.Canny(blurred, 50, 150)
+    edge_ratio = np.sum(edges > 0) / (img.shape[0] * img.shape[1])
+    
+    # Combine features for decision
+    if green_ratio > threshold or (green_ratio > 0.15 and edge_ratio > 0.05):
+        return True
+    return False
+
 # Title Section
 st.markdown("""
     <div class="title-container">
@@ -136,50 +172,61 @@ with col2:
             if img is None:
                 st.error("⚠️ Failed to load image. Please try a different image.")
             else:
-                # Display the uploaded image (removed use_container_width)
-                st.image(image_bytes, caption="Uploaded Image")
+                # Display the uploaded image
+                st.image(image_bytes, caption="Uploaded Image", use_container_width=True)
+                
+                # First check if it's a plant image
+                is_plant = is_plant_image(img)
                 
                 # Add analyze button with custom styling
                 if st.button("🔍 Analyze Plant"):
                     with st.spinner("Analyzing image..."):
-                        try:
-                            # Image preprocessing
-                            normalized_image = np.expand_dims(
-                                cv.resize(cv.cvtColor(img, cv.COLOR_BGR2RGB), (150, 150)), 
-                                axis=0
-                            )
-                            
-                            # Load model and make prediction
-                            model = keras.models.load_model('Training/model/Leaf Deases(96,88).h5')
-                            predictions = model.predict(normalized_image)
-                            confidence = predictions[0][np.argmax(predictions)] * 100
-                            
-                            # Display results with proper formatting
-                            st.markdown("### Analysis Results")
-                            if confidence >= 80:
-                                result = label_name[np.argmax(predictions)]
-                                st.success(f"**Detected Disease:** {result}")
-                                st.info(f"**Confidence:** {confidence:.2f}%")
+                        # First check if the image appears to be a plant/leaf
+                        if not is_plant:
+                            st.error("❌ This doesn't appear to be a plant or leaf image. Please upload an image of a plant leaf.")
+                            st.info("For accurate results, please upload a clear image of a plant leaf against a simple background.")
+                        else:
+                            try:
+                                # Image preprocessing
+                                normalized_image = np.expand_dims(
+                                    cv.resize(cv.cvtColor(img, cv.COLOR_BGR2RGB), (150, 150)), 
+                                    axis=0
+                                )
                                 
-                                # Add treatment recommendations based on detected disease
-                                st.markdown("### Treatment Recommendations")
-                                st.markdown("""
-                                Based on the detected condition, here are some recommendations:
-                                1. Isolate affected plants
-                                2. Remove infected leaves
-                                3. Apply appropriate treatment
-                                4. Monitor plant recovery
-                                """)
-                            else:
-                                st.warning("⚠️ Confidence too low. Please ensure the image is clear and well-lit.")
-                        except Exception as e:
-                            st.error(f"⚠️ Analysis failed. Error: {str(e)}")
-                            # Correct indentation for the st.info call
-                            st.info("Please make sure the image is clear and contains a leaf from one of the supported plants.")
+                                # Load model and make prediction
+                                model = keras.models.load_model('Training/model/Leaf Deases(96,88).h5')
+                                predictions = model.predict(normalized_image)
+                                confidence = predictions[0][np.argmax(predictions)] * 100
+                                
+                                # Extra validation: If all class probabilities are similar, it might not be a valid leaf
+                                prediction_std = np.std(predictions[0])
+                                if prediction_std < 0.02:  # If standard deviation is low, predictions are uncertain
+                                    st.error("❌ This doesn't appear to be one of the supported plant types.")
+                                    st.info("Please upload an image of a leaf from one of the supported plant types listed above.")
+                                else:
+                                    # Display results with proper formatting
+                                    st.markdown("### Analysis Results")
+                                    if confidence >= 80:
+                                        result = label_name[np.argmax(predictions)]
+                                        st.success(f"**Detected Disease:** {result}")
+                                        st.info(f"**Confidence:** {confidence:.2f}%")
+                                        
+                                        # Add treatment recommendations based on detected disease
+                                        st.markdown("### Treatment Recommendations")
+                                        st.markdown("""
+                                        Based on the detected condition, here are some recommendations:
+                                        1. Isolate affected plants
+                                        2. Remove infected leaves
+                                        3. Apply appropriate treatment
+                                        4. Monitor plant recovery
+                                        """)
+                                    else:
+                                        st.warning("⚠️ Confidence too low. Please ensure the image is clear and well-lit.")
+                            except Exception as e:
+                                st.error(f"⚠️ Analysis failed. Error: {str(e)}")
+                                st.info("Please make sure the image is clear and contains a leaf from one of the supported plants.")
         except Exception as e:
-            # Display the specific error encountered during image processing
-            st.error(f"⚠️ Failed to process the image. Error: {str(e)}")
-            st.info("Please try uploading a different image or ensure the file is not corrupted.")
+            st.error("⚠️ Failed to process the image. Please try a different image.")
     
     st.markdown('</div>', unsafe_allow_html=True)
 
