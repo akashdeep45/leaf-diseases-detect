@@ -4,6 +4,8 @@ import numpy as np
 import keras
 from PIL import Image
 import tensorflow as tf
+import io
+import traceback
 
 # Define label names at the top
 label_name = ['Apple scab','Apple Black rot', 'Apple Cedar apple rust', 'Apple healthy', 'Cherry Powdery mildew',
@@ -91,27 +93,31 @@ def is_plant_image(img, threshold=0.3):
     Returns:
         boolean: True if the image likely contains a plant, False otherwise
     """
-    # 1. Check color distribution (plants are typically green)
-    hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
-    
-    # Define range for green color in HSV
-    lower_green = np.array([25, 40, 40])
-    upper_green = np.array([95, 255, 255])
-    
-    # Create mask for green areas
-    green_mask = cv.inRange(hsv, lower_green, upper_green)
-    green_ratio = np.sum(green_mask > 0) / (img.shape[0] * img.shape[1])
-    
-    # 2. Check texture features (edges characteristic of leaves)
-    gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-    blurred = cv.GaussianBlur(gray, (5, 5), 0)
-    edges = cv.Canny(blurred, 50, 150)
-    edge_ratio = np.sum(edges > 0) / (img.shape[0] * img.shape[1])
-    
-    # Combine features for decision
-    if green_ratio > threshold or (green_ratio > 0.15 and edge_ratio > 0.05):
-        return True
-    return False
+    try:
+        # 1. Check color distribution (plants are typically green)
+        hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
+        
+        # Define range for green color in HSV
+        lower_green = np.array([25, 40, 40])
+        upper_green = np.array([95, 255, 255])
+        
+        # Create mask for green areas
+        green_mask = cv.inRange(hsv, lower_green, upper_green)
+        green_ratio = np.sum(green_mask > 0) / (img.shape[0] * img.shape[1])
+        
+        # 2. Check texture features (edges characteristic of leaves)
+        gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        blurred = cv.GaussianBlur(gray, (5, 5), 0)
+        edges = cv.Canny(blurred, 50, 150)
+        edge_ratio = np.sum(edges > 0) / (img.shape[0] * img.shape[1])
+        
+        # Combine features for decision
+        if green_ratio > threshold or (green_ratio > 0.15 and edge_ratio > 0.05):
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Error in plant detection: {str(e)}")
+        return True  # Default to True on error to allow further processing
 
 # Title Section
 st.markdown("""
@@ -165,15 +171,22 @@ with col2:
     
     if input_image is not None:
         try:
-            # Load and preprocess image
-            image_bytes = input_image.read()
-            img = cv.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv.IMREAD_COLOR)
+            # Try to handle the file with PIL first to better handle various image formats
+            pil_image = Image.open(input_image)
+            
+            # Convert PIL image to bytes for OpenCV
+            img_byte_arr = io.BytesIO()
+            pil_image.save(img_byte_arr, format=pil_image.format if pil_image.format else 'JPEG')
+            img_byte_arr = img_byte_arr.getvalue()
+            
+            # Now process with OpenCV
+            img = cv.imdecode(np.frombuffer(img_byte_arr, dtype=np.uint8), cv.IMREAD_COLOR)
             
             if img is None:
-                st.error("⚠️ Failed to load image. Please try a different image.")
+                st.error("⚠️ OpenCV couldn't decode the image. Please try another format like JPG or PNG.")
             else:
-                # Display the uploaded image
-                st.image(image_bytes, caption="Uploaded Image", use_container_width=True)
+                # Display the uploaded image - without use_container_width parameter
+                st.image(img_byte_arr, caption="Uploaded Image")
                 
                 # First check if it's a plant image
                 is_plant = is_plant_image(img)
@@ -221,12 +234,17 @@ with col2:
                                         4. Monitor plant recovery
                                         """)
                                     else:
-                                        st.warning("⚠️ Confidence too low. Please ensure the image is clear and well-lit.")
+                                        st.warning(f"⚠️ Confidence too low ({confidence:.2f}%). Please ensure the image is clear and well-lit.")
                             except Exception as e:
-                                st.error(f"⚠️ Analysis failed. Error: {str(e)}")
+                                st.error(f"⚠️ Analysis failed: {str(e)}")
                                 st.info("Please make sure the image is clear and contains a leaf from one of the supported plants.")
         except Exception as e:
-            st.error("⚠️ Failed to process the image. Please try a different image.")
+            st.error(f"⚠️ Failed to process the image: {str(e)}")
+            st.info("Troubleshooting tips: Try a JPG or PNG format, ensure the image isn't corrupted, and keep the image size under 5MB.")
+            
+            # For development - show the full error trace
+            with st.expander("Technical error details"):
+                st.code(traceback.format_exc())
     
     st.markdown('</div>', unsafe_allow_html=True)
 
